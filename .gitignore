@@ -1,0 +1,9 @@
+/target
+Cargo.lock
+.env
+env
+config.toml
+*.db
+*.db-shm
+*.db-wal
+/result

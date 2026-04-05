@@ -1,0 +1,17 @@
+# imshare configuration file
+# Default location: ~/.config/imshare/config.toml
+
+# Public domain where share links will be accessed
+public_domain = "pub.nith.sh"
+
+# Default TTL for generated links (e.g., "30d", "7d", "24h", "1w")
+default_ttl = "30d"
+
+# Path to SQLite database (supports ~ for home directory)
+db_path = "~/.local/share/imshare/links.db"
+
+# Upstream immich-public-proxy address (used by imshare-verify)
+upstream = "http://localhost:3000"
+
+# Port for imshare-verify to listen on
+verify_port = 3001
