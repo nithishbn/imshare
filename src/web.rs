@@ -73,7 +73,7 @@ fn generate_link(state: &AppState, form: GenerateForm) -> Result<String> {
             <td class="px-6 py-4 text-sm text-gray-900">{}</td>
             <td class="px-6 py-4 text-sm">
                 <div class="flex items-center space-x-2">
-                    <code class="text-blue-600">{}</code>
+                    <a href="{}" target="_blank" class="text-blue-600 hover:text-blue-800 underline"><code>{}</code></a>
                     <button onclick="navigator.clipboard.writeText('{}')" class="text-xs text-gray-500 hover:text-gray-700">Copy</button>
                 </div>
             </td>
@@ -89,7 +89,7 @@ fn generate_link(state: &AppState, form: GenerateForm) -> Result<String> {
                 </form>
             </td>
         </tr>"#,
-        label_display, short_url, short_url, expires_str, status, qr_code_base64, id
+        label_display, short_url, short_url, short_url, expires_str, status, qr_code_base64, id
     ))
 }
 
@@ -128,7 +128,7 @@ fn list_links(state: &AppState) -> Result<String> {
                 <td class="px-6 py-4 text-sm text-gray-900">{}</td>
                 <td class="px-6 py-4 text-sm">
                     <div class="flex items-center space-x-2">
-                        <code class="text-blue-600">{}</code>
+                        <a href="{}" target="_blank" class="text-blue-600 hover:text-blue-800 underline"><code>{}</code></a>
                         <button onclick="navigator.clipboard.writeText('{}')" class="text-xs text-gray-500 hover:text-gray-700">Copy</button>
                     </div>
                 </td>
@@ -142,6 +142,7 @@ fn list_links(state: &AppState) -> Result<String> {
                 </td>
             </tr>"#,
             label_display,
+            short_url,
             short_url,
             short_url,
             expires_str,
