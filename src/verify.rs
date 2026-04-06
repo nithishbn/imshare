@@ -5,10 +5,10 @@ mod jwt;
 use anyhow::{Context, Result};
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Path, State},
     http::{Request, StatusCode, Uri},
-    response::{IntoResponse, Response},
-    routing::any,
+    response::{IntoResponse, Redirect, Response},
+    routing::{any, get},
     Router,
 };
 use chrono::Utc;
@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
     });
 
     let app = Router::new()
+        .route("/s/:code", get(handle_short_url))
         .route("/share/*path", any(handle_request))
         .layer(CookieManagerLayer::new())
         .with_state(state);
@@ -155,6 +156,35 @@ fn validate_session_cookie(cookies: &Cookies, album_id: &str, key: &Key) -> Opti
     }
 
     None
+}
+
+async fn handle_short_url(
+    State(state): State<Arc<AppState>>,
+    Path(code): Path<String>,
+) -> Response {
+    // Look up the short code in the database
+    match state.db.get_link_by_short_code(&code) {
+        Ok(Some(link)) => {
+            // Redirect to the full URL
+            Redirect::temporary(&link.url).into_response()
+        }
+        Ok(None) => {
+            // Short code not found
+            (
+                StatusCode::NOT_FOUND,
+                "Short URL not found or has been removed",
+            )
+                .into_response()
+        }
+        Err(_) => {
+            // Database error
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error",
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn handle_request(

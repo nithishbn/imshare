@@ -3,6 +3,7 @@ mod db;
 mod jwt;
 mod qr;
 mod utils;
+mod web;
 
 use anyhow::{Context, Result};
 use axum::{
@@ -23,10 +24,10 @@ use tokio::net::TcpListener;
 use utils::{extract_album_id, parse_ttl};
 use uuid::Uuid;
 
-struct AppState {
-    config: Config,
-    db: Database,
-    secret: String,
+pub struct AppState {
+    pub config: Config,
+    pub db: Database,
+    pub secret: String,
 }
 
 #[derive(Deserialize)]
@@ -41,6 +42,7 @@ struct GenerateRequest {
 #[derive(Serialize)]
 struct GenerateResponse {
     id: i64,
+    short_url: String,
     url: String,
     qr_code_png_base64: String,
     album_id: String,
@@ -62,6 +64,7 @@ struct LinkInfo {
     id: i64,
     label: Option<String>,
     album_id: String,
+    short_url: String,
     url: String,
     expires_at: Option<String>,
     status: String,
@@ -87,6 +90,7 @@ struct ExtendRequest {
 #[derive(Serialize)]
 struct ExtendResponse {
     id: i64,
+    short_url: String,
     url: String,
     qr_code_png_base64: String,
     expires_at: Option<String>,
@@ -101,13 +105,27 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(AppState { config, db, secret });
 
-    let app = Router::new()
-        .route("/imshare-api/generate", post(handle_generate))
-        .route("/imshare-api/list", get(handle_list))
-        .route("/imshare-api/revoke", post(handle_revoke))
-        .route("/imshare-api/extend", post(handle_extend))
-        .route("/imshare-api/health", get(health_check))
+    // JSON API routes with /imshare/api prefix
+    let api_routes = Router::new()
+        .route("/imshare/api/generate", post(handle_generate))
+        .route("/imshare/api/list", get(handle_list))
+        .route("/imshare/api/revoke", post(handle_revoke))
+        .route("/imshare/api/extend", post(handle_extend))
+        .route("/imshare/api/health", get(health_check))
+        .with_state(state.clone());
+
+    // HTMX Web UI routes with /imshare prefix
+    let web_routes = Router::new()
+        .route("/imshare/", get(web::dashboard))
+        .route("/imshare/generate", post(web::handle_generate))
+        .route("/imshare/links", get(web::handle_list))
+        .route("/imshare/revoke", post(web::handle_revoke))
         .with_state(state);
+
+    // Combine routes
+    let app = Router::new()
+        .merge(api_routes)
+        .merge(web_routes);
 
     let port = std::env::var("IMSHARE_API_PORT")
         .unwrap_or_else(|_| "3002".to_string())
@@ -180,8 +198,13 @@ async fn generate_link(
     // Store in database
     let id = state.db.insert_link(&album_id, req.label.as_deref(), &url, &jti, expires_at)?;
 
+    // Get the link to retrieve the generated short_code
+    let link = state.db.get_link_by_id(id)?.context("Failed to retrieve created link")?;
+    let short_url = format!("https://{}/s/{}", state.config.public_domain, link.short_code);
+
     Ok(GenerateResponse {
         id,
+        short_url,
         url,
         qr_code_png_base64,
         album_id,
@@ -211,9 +234,10 @@ async fn list_links(state: Arc<AppState>) -> Result<ListResponse> {
             id: link.id,
             label: link.label,
             album_id: link.album_id.clone(),
+            short_url: format!("https://{}/s/{}", state.config.public_domain, link.short_code),
             url: link.url.clone(),
             expires_at: link.expires_at.map(|dt| dt.to_rfc3339()),
-            status: utils::get_status(link.expires_at, link.revoked_at).into(),
+            status: utils::get_status(link.expires_at, link.revoked_at).to_string(),
         })
         .collect();
 
@@ -311,8 +335,12 @@ async fn extend_link(
     // Update database
     state.db.extend_link(req.id, expires_at, &jti, &url)?;
 
+    // Build short URL
+    let short_url = format!("https://{}/s/{}", state.config.public_domain, link.short_code);
+
     Ok(ExtendResponse {
         id: req.id,
+        short_url,
         url,
         qr_code_png_base64,
         expires_at: expires_at.map(|dt| dt.to_rfc3339()),

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use rand::Rng;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::Mutex;
@@ -10,6 +11,7 @@ pub struct Link {
     pub label: Option<String>,
     pub url: String,
     pub jti: String,
+    pub short_code: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
@@ -17,6 +19,17 @@ pub struct Link {
 
 pub struct Database {
     conn: Mutex<Connection>,
+}
+
+fn generate_short_code() -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    (0..6)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
 }
 
 impl Database {
@@ -36,12 +49,25 @@ impl Database {
                 label TEXT,
                 url TEXT NOT NULL,
                 jti TEXT NOT NULL UNIQUE,
+                short_code TEXT NOT NULL UNIQUE,
                 created_at TEXT NOT NULL,
                 expires_at TEXT,
                 revoked_at TEXT
             )",
             [],
         )?;
+
+        // Migration: Add short_code column if it doesn't exist
+        let _ = conn.execute(
+            "ALTER TABLE links ADD COLUMN short_code TEXT",
+            [],
+        );
+
+        // Create unique index on short_code if not exists
+        let _ = conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_short_code ON links(short_code)",
+            [],
+        );
 
         Ok(Database { conn: Mutex::new(conn) })
     }
@@ -57,13 +83,32 @@ impl Database {
         let created_at = Utc::now();
         let conn = self.conn.lock().unwrap();
 
+        // Generate unique short code (retry on collision)
+        let short_code = loop {
+            let code = generate_short_code();
+            // Check if code already exists
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM links WHERE short_code = ?1)",
+                    params![code],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+
+            if !exists {
+                break code;
+            }
+            // Collision detected, retry
+        };
+
         conn.execute(
-            "INSERT INTO links (album_id, label, url, jti, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO links (album_id, label, url, jti, short_code, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 album_id,
                 label,
                 url,
                 jti,
+                short_code,
                 created_at.to_rfc3339(),
                 expires_at.map(|dt| dt.to_rfc3339())
             ],
@@ -75,7 +120,7 @@ impl Database {
     pub fn list_links(&self) -> Result<Vec<Link>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, album_id, label, url, jti, created_at, expires_at, revoked_at FROM links ORDER BY created_at DESC",
+            "SELECT id, album_id, label, url, jti, short_code, created_at, expires_at, revoked_at FROM links ORDER BY created_at DESC",
         )?;
 
         let links = stmt
@@ -86,15 +131,16 @@ impl Database {
                     label: row.get(2)?,
                     url: row.get(3)?,
                     jti: row.get(4)?,
+                    short_code: row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "legacy".to_string()),
                     created_at: row
-                        .get::<_, String>(5)?
+                        .get::<_, String>(6)?
                         .parse::<DateTime<Utc>>()
                         .unwrap(),
                     expires_at: row
-                        .get::<_, Option<String>>(6)?
+                        .get::<_, Option<String>>(7)?
                         .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
                     revoked_at: row
-                        .get::<_, Option<String>>(7)?
+                        .get::<_, Option<String>>(8)?
                         .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
                 })
             })?
@@ -132,7 +178,7 @@ impl Database {
     pub fn get_link_by_id(&self, id: i64) -> Result<Option<Link>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, album_id, label, url, jti, created_at, expires_at, revoked_at FROM links WHERE id = ?1",
+            "SELECT id, album_id, label, url, jti, short_code, created_at, expires_at, revoked_at FROM links WHERE id = ?1",
         )?;
 
         let link = stmt
@@ -143,15 +189,48 @@ impl Database {
                     label: row.get(2)?,
                     url: row.get(3)?,
                     jti: row.get(4)?,
+                    short_code: row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "legacy".to_string()),
                     created_at: row
-                        .get::<_, String>(5)?
+                        .get::<_, String>(6)?
                         .parse::<DateTime<Utc>>()
                         .unwrap(),
                     expires_at: row
-                        .get::<_, Option<String>>(6)?
+                        .get::<_, Option<String>>(7)?
                         .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
                     revoked_at: row
+                        .get::<_, Option<String>>(8)?
+                        .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
+                })
+            })
+            .optional()?;
+
+        Ok(link)
+    }
+
+    pub fn get_link_by_short_code(&self, short_code: &str) -> Result<Option<Link>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, album_id, label, url, jti, short_code, created_at, expires_at, revoked_at FROM links WHERE short_code = ?1",
+        )?;
+
+        let link = stmt
+            .query_row([short_code], |row| {
+                Ok(Link {
+                    id: row.get(0)?,
+                    album_id: row.get(1)?,
+                    label: row.get(2)?,
+                    url: row.get(3)?,
+                    jti: row.get(4)?,
+                    short_code: row.get(5)?,
+                    created_at: row
+                        .get::<_, String>(6)?
+                        .parse::<DateTime<Utc>>()
+                        .unwrap(),
+                    expires_at: row
                         .get::<_, Option<String>>(7)?
+                        .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
+                    revoked_at: row
+                        .get::<_, Option<String>>(8)?
                         .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
                 })
             })

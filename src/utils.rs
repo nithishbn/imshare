@@ -30,7 +30,8 @@ pub fn parse_ttl(ttl: &str) -> Result<Option<Duration>> {
 pub fn extract_album_id(input: &str) -> Result<String> {
     // Check if it's a URL
     if input.contains("://") || input.contains('/') {
-        let re = Regex::new(r"/share/([a-f0-9-]+)").unwrap();
+        // Match Immich share keys (base64url-like: alphanumeric, underscore, hyphen)
+        let re = Regex::new(r"/share/([A-Za-z0-9_-]+)").unwrap();
         if let Some(caps) = re.captures(input) {
             return Ok(caps[1].to_string());
         }

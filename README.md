@@ -5,10 +5,13 @@ A lightweight Rust CLI tool that generates signed, expiring share links for an I
 ## Features
 
 - Generate JWT-signed share links with configurable expiration
+- **Short URLs** - 6-character codes for easy sharing (e.g., `pub.nith.sh/s/aB3kXy`)
 - Revoke links without deleting them from history
 - Extend existing links (issues new token)
+- QR code generation (CLI and API)
 - SQLite-backed persistence
 - Verification middleware with fail-closed security
+- HTTP API for automation and iOS Shortcuts
 - NixOS-native deployment
 
 ## Architecture
@@ -174,6 +177,46 @@ imshare generate abc-123-def --ttl unlimited
 
 TTL formats: `7d`, `24h`, `1w`, `30d`, `1m`, `1y`, `unlimited`
 
+**Output:**
+```
+Generated link #5
+Short URL:  https://pub.nith.sh/s/aB3kXy
+Full URL:   https://pub.nith.sh/share/abc-123?token=eyJ...
+QR Code:    [ASCII QR code displayed]
+Expires:    2026-04-12 15:30 UTC
+```
+
+### Short URLs
+
+Every generated link includes a **6-character short code** for easy sharing:
+
+**Benefits:**
+- Short and memorable: `pub.nith.sh/s/aB3kXy` (30 chars vs 200+)
+- Perfect for text messages and social media
+- Automatically redirects to full JWT URL
+- Same security: JWT validation, expiration, revocation all work
+
+**How it works:**
+1. Short code generated on link creation (6 random alphanumeric chars)
+2. Stored in database linked to the full share URL
+3. `/s/aB3kXy` redirects to `/share/album-id?token=...`
+4. JWT still validated on every request
+5. Revoke/extend operations work on the underlying link
+
+**Using short URLs:**
+```bash
+# CLI shows both URLs
+imshare generate abc-123 --ttl 7d
+
+# API returns both in response
+curl .../imshare-api/generate
+{
+  "short_url": "https://pub.nith.sh/s/aB3kXy",
+  "url": "https://pub.nith.sh/share/...",
+  ...
+}
+```
+
 ### List All Links
 
 ```bash
@@ -322,11 +365,18 @@ CREATE TABLE links (
     label TEXT,
     url TEXT NOT NULL,
     jti TEXT NOT NULL UNIQUE,
+    short_code TEXT NOT NULL UNIQUE,  -- 6-char alphanumeric code
     created_at TEXT NOT NULL,
     expires_at TEXT,
     revoked_at TEXT
 );
 ```
+
+**Short codes:**
+- 6 alphanumeric characters (A-Z, a-z, 0-9)
+- 56.8 billion possible combinations
+- Stored as unique index for fast lookups
+- Automatically generated on link creation
 
 ## JWT Payload
 

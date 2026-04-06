@@ -115,6 +115,10 @@ fn generate(
     // Store in database
     let id = db.insert_link(&album_id, label, &url, &jti, expires_at)?;
 
+    // Get the link to retrieve the generated short_code
+    let link = db.get_link_by_id(id)?.context("Failed to retrieve created link")?;
+    let short_url = format!("https://{}/s/{}", config.public_domain, link.short_code);
+
     // Output
     println!("✓ Generated link #{}", id);
     if let Some(lbl) = label {
@@ -122,7 +126,8 @@ fn generate(
     }
     println!("  Album: {}", album_id);
     println!("  Expires: {}", format_expires_at(expires_at));
-    println!("\n{}", url);
+    println!("\nShort URL:  {}", short_url);
+    println!("Full URL:   {}", url);
 
     // Generate and display QR code
     match qr::generate_qr_code_terminal(&url) {
@@ -147,10 +152,10 @@ fn list(db: &Database) -> Result<()> {
 
     // Print header
     println!(
-        "{:<5} {:<20} {:<25} {:<22} {:<10}",
-        "ID", "Label", "Album ID", "Expires", "Status"
+        "{:<5} {:<20} {:<30} {:<22} {:<10}",
+        "ID", "Label", "Short URL", "Expires", "Status"
     );
-    println!("{}", "-".repeat(85));
+    println!("{}", "-".repeat(90));
 
     // Print links
     for link in links {
@@ -161,13 +166,21 @@ fn list(db: &Database) -> Result<()> {
             .chars()
             .take(20)
             .collect::<String>();
-        let album_id_short = link.album_id.chars().take(25).collect::<String>();
+
+        // Extract domain from config for short URL
+        let short_url_display = if link.short_code == "legacy" {
+            "legacy".to_string()
+        } else {
+            // Just show the short code, not the full domain
+            format!("/s/{}", link.short_code)
+        };
+
         let expires = format_expires_at(link.expires_at);
         let status = get_status(link.expires_at, link.revoked_at);
 
         println!(
-            "{:<5} {:<20} {:<25} {:<22} {:<10}",
-            link.id, label, album_id_short, expires, status
+            "{:<5} {:<20} {:<30} {:<22} {:<10}",
+            link.id, label, short_url_display, expires, status
         );
     }
 
@@ -217,11 +230,15 @@ fn extend(config: &Config, db: &Database, id: i64, ttl: &str) -> Result<()> {
     // Update database
     db.extend_link(id, new_expires_at, &new_jti, &new_url)?;
 
+    // Build short URL (short_code doesn't change when extending)
+    let short_url = format!("https://{}/s/{}", config.public_domain, link.short_code);
+
     println!("✓ Extended link #{}", id);
     println!("  New expires: {}", format_expires_at(new_expires_at));
     println!("\n⚠️  WARNING: This has invalidated the old URL.");
     println!("   You must update any previously shared links.\n");
-    println!("{}", new_url);
+    println!("Short URL:  {}", short_url);
+    println!("Full URL:   {}", new_url);
 
     // Generate and display QR code
     match qr::generate_qr_code_terminal(&new_url) {
