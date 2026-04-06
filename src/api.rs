@@ -21,6 +21,9 @@ use jwt::Claims;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tower_http::trace::TraceLayer;
+use tracing::info;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use utils::{extract_album_id, parse_ttl};
 use uuid::Uuid;
 
@@ -98,6 +101,15 @@ struct ExtendResponse {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize tracing
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "imshare=info,tower_http=info".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
     let config = Config::load()?;
     let db = Database::new(&config.db_path())?;
     let secret = std::env::var("IMSHARE_SECRET")
@@ -125,14 +137,15 @@ async fn main() -> Result<()> {
     // Combine routes
     let app = Router::new()
         .merge(api_routes)
-        .merge(web_routes);
+        .merge(web_routes)
+        .layer(TraceLayer::new_for_http());
 
     let port = std::env::var("IMSHARE_API_PORT")
         .unwrap_or_else(|_| "3002".to_string())
         .parse::<u16>()?;
 
     let addr = format!("0.0.0.0:{}", port);
-    println!("imshare-api listening on {}", addr);
+    info!("imshare-api listening on {}", addr);
 
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
