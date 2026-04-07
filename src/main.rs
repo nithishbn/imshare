@@ -116,7 +116,9 @@ fn generate(
     let id = db.insert_link(&album_id, label, &url, &jti, expires_at)?;
 
     // Get the link to retrieve the generated short_code
-    let link = db.get_link_by_id(id)?.context("Failed to retrieve created link")?;
+    let link = db
+        .get_link_by_id(id)?
+        .context("Failed to retrieve created link")?;
     let short_url = format!("https://{}/s/{}", config.public_domain, link.short_code);
 
     // Output

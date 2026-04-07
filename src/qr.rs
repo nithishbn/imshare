@@ -1,10 +1,13 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
-use qrcode::QrCode;
 use image::Luma;
+use qrcode::QrCode;
 
 pub fn generate_qr_code_terminal(url: &str) -> Result<String> {
     let code = QrCode::new(url.as_bytes())?;
-    let string = code.render::<char>()
+    let string = code
+        .render::<char>()
         .quiet_zone(false)
         .module_dimensions(2, 1)
         .build();
@@ -18,8 +21,7 @@ pub fn generate_qr_code_png(url: &str) -> Result<Vec<u8>> {
 
     let mut buf = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut buf);
-    image::DynamicImage::ImageLuma8(image)
-        .write_to(&mut cursor, image::ImageFormat::Png)?;
+    image::DynamicImage::ImageLuma8(image).write_to(&mut cursor, image::ImageFormat::Png)?;
 
     Ok(buf)
 }

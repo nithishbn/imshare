@@ -112,8 +112,8 @@ async fn main() -> Result<()> {
 
     let config = Config::load()?;
     let db = Database::new(&config.db_path())?;
-    let secret = std::env::var("IMSHARE_SECRET")
-        .context("IMSHARE_SECRET environment variable not set")?;
+    let secret =
+        std::env::var("IMSHARE_SECRET").context("IMSHARE_SECRET environment variable not set")?;
 
     let state = Arc::new(AppState { config, db, secret });
 
@@ -173,10 +173,7 @@ async fn handle_generate(
     }
 }
 
-async fn generate_link(
-    state: Arc<AppState>,
-    req: GenerateRequest,
-) -> Result<GenerateResponse> {
+async fn generate_link(state: Arc<AppState>, req: GenerateRequest) -> Result<GenerateResponse> {
     // Extract album ID (supports both UUIDs and full URLs)
     let album_id = extract_album_id(&req.album_id)?;
 
@@ -209,11 +206,19 @@ async fn generate_link(
     let qr_code_png_base64 = base64::prelude::BASE64_STANDARD.encode(&qr_png);
 
     // Store in database
-    let id = state.db.insert_link(&album_id, req.label.as_deref(), &url, &jti, expires_at)?;
+    let id = state
+        .db
+        .insert_link(&album_id, req.label.as_deref(), &url, &jti, expires_at)?;
 
     // Get the link to retrieve the generated short_code
-    let link = state.db.get_link_by_id(id)?.context("Failed to retrieve created link")?;
-    let short_url = format!("https://{}/s/{}", state.config.public_domain, link.short_code);
+    let link = state
+        .db
+        .get_link_by_id(id)?
+        .context("Failed to retrieve created link")?;
+    let short_url = format!(
+        "https://{}/s/{}",
+        state.config.public_domain, link.short_code
+    );
 
     Ok(GenerateResponse {
         id,
@@ -247,7 +252,10 @@ async fn list_links(state: Arc<AppState>) -> Result<ListResponse> {
             id: link.id,
             label: link.label,
             album_id: link.album_id.clone(),
-            short_url: format!("https://{}/s/{}", state.config.public_domain, link.short_code),
+            short_url: format!(
+                "https://{}/s/{}",
+                state.config.public_domain, link.short_code
+            ),
             url: link.url.clone(),
             expires_at: link.expires_at.map(|dt| dt.to_rfc3339()),
             status: utils::get_status(link.expires_at, link.revoked_at).to_string(),
@@ -273,10 +281,7 @@ async fn handle_revoke(
     }
 }
 
-async fn revoke_link(
-    state: Arc<AppState>,
-    req: RevokeRequest,
-) -> Result<RevokeResponse> {
+async fn revoke_link(state: Arc<AppState>, req: RevokeRequest) -> Result<RevokeResponse> {
     let success = state.db.revoke_link(req.id)?;
 
     if success {
@@ -308,10 +313,7 @@ async fn handle_extend(
     }
 }
 
-async fn extend_link(
-    state: Arc<AppState>,
-    req: ExtendRequest,
-) -> Result<ExtendResponse> {
+async fn extend_link(state: Arc<AppState>, req: ExtendRequest) -> Result<ExtendResponse> {
     // Get existing link
     let link = state
         .db
@@ -349,7 +351,10 @@ async fn extend_link(
     state.db.extend_link(req.id, expires_at, &jti, &url)?;
 
     // Build short URL
-    let short_url = format!("https://{}/s/{}", state.config.public_domain, link.short_code);
+    let short_url = format!(
+        "https://{}/s/{}",
+        state.config.public_domain, link.short_code
+    );
 
     Ok(ExtendResponse {
         id: req.id,

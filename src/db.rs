@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rand::Rng;
@@ -24,7 +26,7 @@ pub struct Database {
 fn generate_short_code() -> String {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::thread_rng();
-    (0..6)
+    (0..12)
         .map(|_| {
             let idx = rng.gen_range(0..CHARSET.len());
             CHARSET[idx] as char
@@ -58,10 +60,7 @@ impl Database {
         )?;
 
         // Migration: Add short_code column if it doesn't exist
-        let _ = conn.execute(
-            "ALTER TABLE links ADD COLUMN short_code TEXT",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE links ADD COLUMN short_code TEXT", []);
 
         // Create unique index on short_code if not exists
         let _ = conn.execute(
@@ -69,7 +68,9 @@ impl Database {
             [],
         );
 
-        Ok(Database { conn: Mutex::new(conn) })
+        Ok(Database {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn insert_link(
@@ -131,11 +132,10 @@ impl Database {
                     label: row.get(2)?,
                     url: row.get(3)?,
                     jti: row.get(4)?,
-                    short_code: row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "legacy".to_string()),
-                    created_at: row
-                        .get::<_, String>(6)?
-                        .parse::<DateTime<Utc>>()
-                        .unwrap(),
+                    short_code: row
+                        .get::<_, Option<String>>(5)?
+                        .unwrap_or_else(|| "legacy".to_string()),
+                    created_at: row.get::<_, String>(6)?.parse::<DateTime<Utc>>().unwrap(),
                     expires_at: row
                         .get::<_, Option<String>>(7)?
                         .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
@@ -160,7 +160,13 @@ impl Database {
         Ok(affected > 0)
     }
 
-    pub fn extend_link(&self, id: i64, new_expires_at: Option<DateTime<Utc>>, new_jti: &str, new_url: &str) -> Result<bool> {
+    pub fn extend_link(
+        &self,
+        id: i64,
+        new_expires_at: Option<DateTime<Utc>>,
+        new_jti: &str,
+        new_url: &str,
+    ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let affected = conn.execute(
             "UPDATE links SET expires_at = ?1, jti = ?2, url = ?3 WHERE id = ?4",
@@ -189,11 +195,10 @@ impl Database {
                     label: row.get(2)?,
                     url: row.get(3)?,
                     jti: row.get(4)?,
-                    short_code: row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "legacy".to_string()),
-                    created_at: row
-                        .get::<_, String>(6)?
-                        .parse::<DateTime<Utc>>()
-                        .unwrap(),
+                    short_code: row
+                        .get::<_, Option<String>>(5)?
+                        .unwrap_or_else(|| "legacy".to_string()),
+                    created_at: row.get::<_, String>(6)?.parse::<DateTime<Utc>>().unwrap(),
                     expires_at: row
                         .get::<_, Option<String>>(7)?
                         .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
@@ -222,10 +227,7 @@ impl Database {
                     url: row.get(3)?,
                     jti: row.get(4)?,
                     short_code: row.get(5)?,
-                    created_at: row
-                        .get::<_, String>(6)?
-                        .parse::<DateTime<Utc>>()
-                        .unwrap(),
+                    created_at: row.get::<_, String>(6)?.parse::<DateTime<Utc>>().unwrap(),
                     expires_at: row
                         .get::<_, Option<String>>(7)?
                         .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
@@ -241,9 +243,7 @@ impl Database {
 
     pub fn check_token(&self, jti: &str) -> Result<Option<TokenStatus>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT expires_at, revoked_at FROM links WHERE jti = ?1",
-        )?;
+        let mut stmt = conn.prepare("SELECT expires_at, revoked_at FROM links WHERE jti = ?1")?;
 
         let status = stmt
             .query_row([jti], |row| {

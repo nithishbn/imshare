@@ -1,10 +1,8 @@
-use anyhow::{anyhow, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use hmac::{Hmac, Mac};
-use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+#![allow(dead_code)]
 
-type HmacSha256 = Hmac<Sha256>;
+use anyhow::{anyhow, Result};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -15,64 +13,30 @@ pub struct Claims {
 }
 
 pub fn sign_jwt(claims: &Claims, secret: &str) -> Result<String> {
-    // Create header
-    let header = serde_json::json!({
-        "alg": "HS256",
-        "typ": "JWT"
-    });
+    let header = Header::new(Algorithm::HS256);
+    let key = EncodingKey::from_secret(secret.as_bytes());
 
-    // Encode header and payload
-    let header_encoded = URL_SAFE_NO_PAD.encode(serde_json::to_string(&header)?);
-    let payload_encoded = URL_SAFE_NO_PAD.encode(serde_json::to_string(&claims)?);
-
-    // Create message to sign
-    let message = format!("{}.{}", header_encoded, payload_encoded);
-
-    // Create HMAC signature
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .map_err(|e| anyhow!("Invalid secret key: {}", e))?;
-    mac.update(message.as_bytes());
-    let signature = mac.finalize().into_bytes();
-
-    // Encode signature
-    let signature_encoded = URL_SAFE_NO_PAD.encode(&signature);
-
-    // Combine into JWT
-    Ok(format!("{}.{}", message, signature_encoded))
+    encode(&header, claims, &key)
+        .map_err(|e| anyhow!("Failed to encode JWT: {}", e))
 }
 
 pub fn verify_jwt(token: &str, secret: &str) -> Result<Claims> {
-    // Split token into parts
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return Err(anyhow!("Invalid JWT format"));
-    }
+    let key = DecodingKey::from_secret(secret.as_bytes());
 
-    let header_encoded = parts[0];
-    let payload_encoded = parts[1];
-    let signature_provided = parts[2];
+    // Create validation with HS256 algorithm
+    let mut validation = Validation::new(Algorithm::HS256);
 
-    // Verify signature
-    let message = format!("{}.{}", header_encoded, payload_encoded);
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .map_err(|e| anyhow!("Invalid secret key: {}", e))?;
-    mac.update(message.as_bytes());
+    // Disable exp validation by default - we'll check manually
+    // This allows us to handle optional expiration (unlimited tokens)
+    validation.validate_exp = false;
 
-    let signature_expected = mac.finalize().into_bytes();
-    let signature_expected_encoded = URL_SAFE_NO_PAD.encode(&signature_expected);
+    // Decode and verify signature
+    let token_data = decode::<Claims>(token, &key, &validation)
+        .map_err(|e| anyhow!("JWT verification failed: {}", e))?;
 
-    if signature_provided != signature_expected_encoded {
-        return Err(anyhow!("Invalid signature"));
-    }
+    let claims = token_data.claims;
 
-    // Decode payload
-    let payload_bytes = URL_SAFE_NO_PAD
-        .decode(payload_encoded)
-        .map_err(|e| anyhow!("Failed to decode payload: {}", e))?;
-    let claims: Claims = serde_json::from_slice(&payload_bytes)
-        .map_err(|e| anyhow!("Failed to parse claims: {}", e))?;
-
-    // Check expiration
+    // Manual expiration check for tokens that have exp field
     if let Some(exp) = claims.exp {
         let now = chrono::Utc::now().timestamp();
         if now > exp {

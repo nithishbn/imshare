@@ -5,7 +5,8 @@ A lightweight Rust CLI tool that generates signed, expiring share links for an I
 ## Features
 
 - Generate JWT-signed share links with configurable expiration
-- **Short URLs** - 6-character codes for easy sharing (e.g., `pub.nith.sh/s/aB3kXy`)
+- **Short URLs** - 12-character codes for easy sharing (e.g., `pub.nith.sh/s/aB3kXy9mN2pQ`)
+- **DDoS protection** - Deployed behind Cloudflare for rate limiting and abuse prevention
 - Revoke links without deleting them from history
 - Extend existing links (issues new token)
 - QR code generation (CLI and API)
@@ -55,7 +56,7 @@ sudo cp result/bin/imshare* /usr/local/bin/
 ### 3. Configure Secret
 
 ```bash
-# Generate a strong secret
+# Generate a strong secret (minimum 32 characters required)
 openssl rand -base64 32
 
 # Create environment file
@@ -65,6 +66,8 @@ IMSHARE_SECRET=<your-generated-secret>
 EOF
 sudo chmod 600 /etc/imshare/env
 ```
+
+**Note**: `imshare-verify` will refuse to start if `IMSHARE_SECRET` is less than 32 characters.
 
 ### 4. Configure imshare
 
@@ -188,20 +191,22 @@ Expires:    2026-04-12 15:30 UTC
 
 ### Short URLs
 
-Every generated link includes a **6-character short code** for easy sharing:
+Every generated link includes a **12-character short code** for easy sharing:
 
 **Benefits:**
-- Short and memorable: `pub.nith.sh/s/aB3kXy` (30 chars vs 200+)
+- Short and memorable: `pub.nith.sh/s/aB3kXy9mN2pQ` (36 chars vs 200+)
 - Perfect for text messages and social media
 - Automatically redirects to full JWT URL
 - Same security: JWT validation, expiration, revocation all work
+- **Secure**: 3.2 × 10²¹ possible combinations (practically impossible to brute force)
 
 **How it works:**
-1. Short code generated on link creation (6 random alphanumeric chars)
+1. Short code generated on link creation (12 random alphanumeric chars)
 2. Stored in database linked to the full share URL
-3. `/s/aB3kXy` redirects to `/share/album-id?token=...`
+3. `/s/aB3kXy9mN2pQ` redirects to `/share/album-id?token=...`
 4. JWT still validated on every request
 5. Revoke/extend operations work on the underlying link
+6. Protected by Cloudflare's DDoS protection and rate limiting
 
 **Using short URLs:**
 ```bash
@@ -211,7 +216,7 @@ imshare generate abc-123 --ttl 7d
 # API returns both in response
 curl .../imshare-api/generate
 {
-  "short_url": "https://pub.nith.sh/s/aB3kXy",
+  "short_url": "https://pub.nith.sh/s/aB3kXy9mN2pQ",
   "url": "https://pub.nith.sh/share/...",
   ...
 }
@@ -278,9 +283,10 @@ This is by design for security - there's no way to modify a JWT without reissuin
 
 **Subsequent Requests (Images, Thumbnails):**
 1. Checks for valid session cookie
-2. If cookie exists and matches album ID → immediate proxy (no token required)
-3. If no cookie → requires `?token=` parameter
-4. Proxies request to upstream
+2. Re-validates revocation status on every request
+3. If cookie exists and matches album ID → immediate proxy (no token required)
+4. If no cookie → requires `?token=` parameter
+5. Proxies request to upstream
 
 This cookie-based approach allows album pages to load correctly with all embedded images, since immich-public-proxy doesn't add JWT tokens to image URLs.
 
@@ -350,11 +356,26 @@ verify_port = 3001
 
 ## Security Considerations
 
+### Application Security
+- **Secret Strength**: `IMSHARE_SECRET` must be at least 32 characters (enforced at startup)
 - **Secret Management**: Store `IMSHARE_SECRET` in `/etc/imshare/env`, never in version control
 - **Database Permissions**: Ensure SQLite database is readable by `imshare-verify` user
 - **Fail-Closed**: Middleware rejects requests if database is unreachable
-- **Token Revocation**: Revoked tokens are checked on every request
+- **Token Revocation**: Revoked tokens are checked on every request (including cookie-based)
 - **No Token Reuse**: Extending a link issues a new JTI, invalidating the old URL
+- **Secure Logging**: JWT tokens, JTIs, and album IDs are not logged to prevent leakage
+
+### Rate Limiting & Abuse Prevention
+- **Short URL enumeration protection**: 12-character codes (3.2 × 10²¹ combinations)
+- **Brute force protection**: Cryptographically secure random generation
+- **DoS mitigation**: Handled by Cloudflare (DDoS protection, WAF, rate limiting)
+- **Network-level protection**: Deploy behind Cloudflare Tunnel for Layer 3/4/7 protection
+
+### Deployment Security
+- **Network isolation**: API and Web UI should be behind Tailscale/VPN
+- **Public exposure**: Only `imshare-verify` on port 3001 should be publicly accessible
+- **Reverse proxy**: Deploy behind Cloudflare Tunnel for DDoS protection and TLS termination
+- **SystemD hardening**: Use `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
 
 ## Database Schema
 
@@ -365,7 +386,7 @@ CREATE TABLE links (
     label TEXT,
     url TEXT NOT NULL,
     jti TEXT NOT NULL UNIQUE,
-    short_code TEXT NOT NULL UNIQUE,  -- 6-char alphanumeric code
+    short_code TEXT NOT NULL UNIQUE,  -- 12-char alphanumeric code
     created_at TEXT NOT NULL,
     expires_at TEXT,
     revoked_at TEXT
@@ -373,10 +394,12 @@ CREATE TABLE links (
 ```
 
 **Short codes:**
-- 6 alphanumeric characters (A-Z, a-z, 0-9)
-- 56.8 billion possible combinations
+- 12 alphanumeric characters (A-Z, a-z, 0-9)
+- 3.2 × 10²¹ possible combinations (62^12)
+- Practically immune to brute force enumeration
 - Stored as unique index for fast lookups
 - Automatically generated on link creation
+- Protected by Cloudflare DDoS and rate limiting
 
 ## JWT Payload
 

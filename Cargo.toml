@@ -21,8 +21,8 @@ clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 
 # Crypto
-hmac = "0.12"
 sha2 = "0.10"
+jsonwebtoken = "9"
 base64 = "0.22"
 
 # Database

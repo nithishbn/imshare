@@ -14,7 +14,7 @@ use axum::{
 use chrono::Utc;
 use config::Config;
 use db::Database;
-use sha2::{Sha512, Digest};
+use sha2::{Digest, Sha512};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_cookies::{Cookie, CookieManagerLayer, Cookies, Key};
@@ -31,8 +31,15 @@ struct AppState {
 async fn main() -> Result<()> {
     let config = Config::load()?;
     let db = Database::new(&config.db_path())?;
-    let secret = std::env::var("IMSHARE_SECRET")
-        .context("IMSHARE_SECRET environment variable not set")?;
+    let secret =
+        std::env::var("IMSHARE_SECRET").context("IMSHARE_SECRET environment variable not set")?;
+
+    // Validate secret strength
+    if secret.len() < 32 {
+        eprintln!("WARNING: IMSHARE_SECRET is too short (< 32 characters). This is insecure!");
+        eprintln!("Generate a strong secret with: openssl rand -base64 32");
+        anyhow::bail!("IMSHARE_SECRET must be at least 32 characters");
+    }
 
     // Derive cookie signing key from secret (needs 64 bytes for signing)
     // Use SHA-512 to derive a 64-byte key from the secret
@@ -72,14 +79,13 @@ const COOKIE_MAX_AGE: i64 = 86400; // 24 hours in seconds
 
 fn extract_token_from_uri(uri: &Uri) -> Option<String> {
     uri.query().and_then(|q| {
-        q.split('&')
-            .find_map(|param| {
-                let mut parts = param.splitn(2, '=');
-                match (parts.next(), parts.next()) {
-                    (Some("token"), Some(value)) => Some(value.to_string()),
-                    _ => None,
-                }
-            })
+        q.split('&').find_map(|param| {
+            let mut parts = param.splitn(2, '=');
+            match (parts.next(), parts.next()) {
+                (Some("token"), Some(value)) => Some(value.to_string()),
+                _ => None,
+            }
+        })
     })
 }
 
@@ -117,22 +123,22 @@ fn create_session_cookie(album_id: &str, jti: &str) -> Cookie<'static> {
     // Store both album_id and jti in cookie value, separated by ":"
     let cookie_value = format!("{}:{}", album_id, jti);
     Cookie::build((COOKIE_NAME, cookie_value))
-        .path("/")  // Changed from /share to / for broader scope
+        .path("/") // Changed from /share to / for broader scope
         .max_age(time::Duration::seconds(COOKIE_MAX_AGE))
         .http_only(true)
-        .secure(false)  // Set to false to work over HTTP (Tailscale, localhost)
+        .secure(false) // Set to false to work over HTTP (Tailscale, localhost)
         .same_site(tower_cookies::cookie::SameSite::Lax)
         .build()
 }
 
 fn validate_session_cookie(cookies: &Cookies, album_id: &str, key: &Key) -> Option<String> {
-    println!("  Attempting to get signed cookie '{}'", COOKIE_NAME);
+    println!("  Attempting to validate signed cookie '{}'", COOKIE_NAME);
 
     // Try to get the cookie without signature first to see if it exists
-    if let Some(unsigned_cookie) = cookies.get(COOKIE_NAME) {
-        println!("  Found unsigned cookie: '{}'", unsigned_cookie.value());
+    if let Some(_unsigned_cookie) = cookies.get(COOKIE_NAME) {
+        println!("  Cookie '{}' exists (checking signature...)", COOKIE_NAME);
     } else {
-        println!("  No unsigned cookie '{}' found", COOKIE_NAME);
+        println!("  No cookie '{}' found", COOKIE_NAME);
     }
 
     // Now try signed
@@ -142,14 +148,16 @@ fn validate_session_cookie(cookies: &Cookies, album_id: &str, key: &Key) -> Opti
         // Parse "album_id:jti" format
         if let Some((cookie_album_id, jti)) = cookie_value.split_once(':') {
             let is_valid = cookie_album_id == album_id;
-            println!("  Signed cookie found: album='{}', expected='{}', jti='{}', valid={}",
-                     cookie_album_id, album_id, jti, is_valid);
+            println!(
+                "  Signed cookie validated: album_match={}, valid={}",
+                is_valid, is_valid
+            );
 
             if is_valid {
                 return Some(jti.to_string());
             }
         } else {
-            println!("  Cookie value malformed (expected 'album_id:jti'): '{}'", cookie_value);
+            println!("  Cookie value malformed (expected 'album_id:jti' format)");
         }
     } else {
         println!("  No valid signed cookie '{}' found", COOKIE_NAME);
@@ -178,11 +186,7 @@ async fn handle_short_url(
         }
         Err(_) => {
             // Database error
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Database error",
-            )
-                .into_response()
+            (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response()
         }
     }
 }
@@ -197,11 +201,8 @@ async fn handle_request(
 
     println!("\n=== Incoming Request ===");
     println!("Path: {}", path);
-    println!("Query: {:?}", uri.query());
-
-    // Debug: print all cookies
-    let cookie_header = req.headers().get("cookie").and_then(|v| v.to_str().ok());
-    println!("Cookie header: {:?}", cookie_header);
+    // Note: Query string may contain tokens - not logging for security
+    // Note: Cookie header may contain session tokens - not logging for security
 
     // Allow /share/static/* to bypass token validation
     if path.starts_with("/share/static/") {
@@ -273,12 +274,10 @@ async fn handle_request(
         }
 
         // Token is valid - set/update session cookie and proxy
-        println!("✓ Token validated successfully for album: {} (jti: {})", album_id, claims.jti);
+        println!("✓ Token validated successfully");
         let session_cookie = create_session_cookie(&album_id, &claims.jti);
-        println!("  Setting cookie: {}={}:{} (path=/, max-age={}s, http_only=true, secure=false)",
-                 COOKIE_NAME, album_id, claims.jti, COOKIE_MAX_AGE);
+        println!("  Setting session cookie (24h TTL, http_only=true, secure=false)");
 
-        println!("  Cookie details: {:?}", session_cookie);
         cookies.signed(&state.cookie_key).add(session_cookie);
         println!("  Cookie added to response");
 
@@ -297,7 +296,7 @@ async fn handle_request(
     // No token in URL - check for valid session cookie
     println!("No token in URL, checking for session cookie...");
     if let Some(jti) = validate_session_cookie(&cookies, &album_id, &state.cookie_key) {
-        println!("✓ Valid session cookie for album: {} (jti: {})", album_id, jti);
+        println!("✓ Valid session cookie found");
 
         // Even with a valid cookie, check if the token has been revoked
         println!("  Checking revocation status for cookie-based request...");

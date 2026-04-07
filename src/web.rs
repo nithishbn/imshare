@@ -1,10 +1,6 @@
 use crate::{jwt::Claims, qr, utils, AppState};
 use anyhow::{Context, Result};
-use axum::{
-    extract::State,
-    response::Html,
-    Form,
-};
+use axum::{extract::State, response::Html, Form};
 use base64::Engine;
 use chrono::Utc;
 use serde::Deserialize;
@@ -60,9 +56,17 @@ fn generate_link(state: &AppState, form: GenerateForm) -> Result<String> {
     let qr_png = qr::generate_qr_code_png(&url)?;
     let qr_code_base64 = base64::prelude::BASE64_STANDARD.encode(&qr_png);
 
-    let id = state.db.insert_link(&album_id, form.label.as_deref(), &url, &jti, expires_at)?;
-    let link = state.db.get_link_by_id(id)?.context("Failed to retrieve created link")?;
-    let short_url = format!("https://{}/s/{}", state.config.public_domain, link.short_code);
+    let id = state
+        .db
+        .insert_link(&album_id, form.label.as_deref(), &url, &jti, expires_at)?;
+    let link = state
+        .db
+        .get_link_by_id(id)?
+        .context("Failed to retrieve created link")?;
+    let short_url = format!(
+        "https://{}/s/{}",
+        state.config.public_domain, link.short_code
+    );
 
     let expires_str = utils::format_expires_at(expires_at);
     let status = utils::get_status(expires_at, None);
@@ -108,7 +112,10 @@ fn list_links(state: &AppState) -> Result<String> {
 
     let mut html = String::new();
     for link in links {
-        let short_url = format!("https://{}/s/{}", state.config.public_domain, link.short_code);
+        let short_url = format!(
+            "https://{}/s/{}",
+            state.config.public_domain, link.short_code
+        );
         let expires_str = utils::format_expires_at(link.expires_at);
         let status = utils::get_status(link.expires_at, link.revoked_at);
         let label_display = link.label.as_deref().unwrap_or("-");
@@ -170,14 +177,12 @@ pub async fn handle_revoke(
     Form(form): Form<RevokeForm>,
 ) -> Html<String> {
     match state.db.revoke_link(form.id) {
-        Ok(true) => {
-            Html(format!(
-                r#"<tr class="hover:bg-gray-50 bg-red-50">
+        Ok(true) => Html(format!(
+            r#"<tr class="hover:bg-gray-50 bg-red-50">
                     <td colspan="5" class="px-6 py-4 text-sm text-gray-600">Link {} revoked successfully. Refresh to see updated status.</td>
                 </tr>"#,
-                form.id
-            ))
-        }
+            form.id
+        )),
         Ok(false) => Html(format!(
             r#"<tr class="hover:bg-gray-50 bg-yellow-50">
                 <td colspan="5" class="px-6 py-4 text-sm text-gray-600">Link {} not found or already revoked.</td>

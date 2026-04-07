@@ -8,9 +8,9 @@ pub fn parse_ttl(ttl: &str) -> Result<Option<Duration>> {
     }
 
     let re = Regex::new(r"^(\d+)([hdwmy])$").unwrap();
-    let caps = re
-        .captures(ttl)
-        .ok_or_else(|| anyhow!("Invalid TTL format. Use format like: 7d, 24h, 1w, or 'unlimited'"))?;
+    let caps = re.captures(ttl).ok_or_else(|| {
+        anyhow!("Invalid TTL format. Use format like: 7d, 24h, 1w, or 'unlimited'")
+    })?;
 
     let value: i64 = caps[1].parse()?;
     let unit = &caps[2];
@@ -19,7 +19,7 @@ pub fn parse_ttl(ttl: &str) -> Result<Option<Duration>> {
         "h" => Duration::hours(value),
         "d" => Duration::days(value),
         "w" => Duration::weeks(value),
-        "m" => Duration::days(value * 30), // Approximate
+        "m" => Duration::days(value * 30),  // Approximate
         "y" => Duration::days(value * 365), // Approximate
         _ => return Err(anyhow!("Invalid time unit")),
     };
