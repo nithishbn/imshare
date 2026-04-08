@@ -4,7 +4,10 @@ use regex::Regex;
 
 pub fn parse_ttl(ttl: &str) -> Result<Option<Duration>> {
     if ttl == "unlimited" || ttl == "never" {
-        return Ok(None);
+        // Use year 2200 as "unlimited" - effectively unlimited for practical purposes
+        // This avoids JWT validation issues with missing exp claims
+        let years_until_2200 = 175;
+        return Ok(Some(Duration::days(years_until_2200 * 365)));
     }
 
     let re = Regex::new(r"^(\d+)([hdwmy])$").unwrap();
@@ -46,6 +49,13 @@ pub fn format_expires_at(expires_at: Option<chrono::DateTime<chrono::Utc>>) -> S
     match expires_at {
         Some(dt) => {
             let now = Utc::now();
+
+            // Check if expiry is more than 100 years in the future - treat as "unlimited"
+            let hundred_years = Duration::days(100 * 365);
+            if dt > now + hundred_years {
+                return "unlimited".to_string();
+            }
+
             if dt < now {
                 format!("{} (expired)", dt.format("%Y-%m-%d %H:%M UTC"))
             } else {
